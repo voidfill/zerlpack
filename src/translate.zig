@@ -29,6 +29,10 @@ pub fn createNamedFunction(env: c.napi_env, name: [:0]const u8, function: fn (c.
     return napi_function;
 }
 
+pub fn setProperty(env: c.napi_env, object: c.napi_value, key: c.napi_value, value: c.napi_value) !void {
+    try maybeError(env, "Failed to set property", c.napi_set_property(env, object, key, value));
+}
+
 pub fn setNamedProperty(env: c.napi_env, object: c.napi_value, name: [:0]const u8, value: c.napi_value) !void {
     try maybeError(env, "Failed to set named property", c.napi_set_named_property(env, object, name, value));
 }
@@ -85,6 +89,9 @@ pub fn getBufferInfo(env: c.napi_env, value: c.napi_value) ![]u8 {
     var data: ?*anyopaque = null;
     var len: usize = undefined;
     try maybeError(env, "Failed to get buffer info", c.napi_get_buffer_info(env, value, &data, &len));
+    if (data == null) {
+        return &[0]u8{};
+    }
 
     return @as([*]u8, @ptrCast(data))[0..len];
 }
@@ -103,6 +110,18 @@ pub fn createArrayWithLength(env: c.napi_env, length: usize) !c.napi_value {
 
 pub fn setElement(env: c.napi_env, object: c.napi_value, index: u32, value: c.napi_value) !void {
     try maybeError(env, "Failed to set element", c.napi_set_element(env, object, index, value));
+}
+
+pub fn createObject(env: c.napi_env) !c.napi_value {
+    var result: c.napi_value = undefined;
+    try maybeError(env, "Failed to create object", c.napi_create_object(env, &result));
+    return result;
+}
+
+pub fn createBigintWords(env: c.napi_env, sign: u8, words: []const u64) !c.napi_value {
+    var result: c.napi_value = undefined;
+    try maybeError(env, "Failed to create bigint", c.napi_create_bigint_words(env, sign, words.len, words.ptr, &result));
+    return result;
 }
 
 // helpers

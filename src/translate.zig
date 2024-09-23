@@ -49,6 +49,12 @@ pub fn createStringFromSlice(env: c.napi_env, slice: []const u8) !c.napi_value {
     return result;
 }
 
+pub fn createUtf8StringFromSlice(env: c.napi_env, slice: []const u8) !c.napi_value {
+    var result: c.napi_value = undefined;
+    try maybeError(env, "Failed to create string", c.napi_create_string_utf8(env, slice.ptr, slice.len, &result));
+    return result;
+}
+
 pub fn getNull(env: c.napi_env) !c.napi_value {
     var result: c.napi_value = undefined;
     try maybeError(env, "Failed to get null", c.napi_get_null(env, &result));
@@ -58,6 +64,12 @@ pub fn getNull(env: c.napi_env) !c.napi_value {
 pub fn getUndefined(env: c.napi_env) !c.napi_value {
     var result: c.napi_value = undefined;
     try maybeError(env, "Failed to get undefined", c.napi_get_undefined(env, &result));
+    return result;
+}
+
+pub fn createUint32(env: c.napi_env, value: u32) !c.napi_value {
+    var result: c.napi_value = undefined;
+    try maybeError(env, "Failed to create uint32", c.napi_create_uint32(env, value, &result));
     return result;
 }
 

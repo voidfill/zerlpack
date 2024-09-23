@@ -30,6 +30,8 @@ fn decodeWrapper(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.nap
             error.ExceptionThrown => return null, // only "rethrow" zig native errors
             error.BufferSizeMismatch => translate.throw(env, "Buffer size mismatch.") catch return null,
             error.WrongFormatVersion => translate.throw(env, "Wrong format version.") catch return null,
+            error.SignificantBitError => translate.throw(env, "Expected unsignificant bits to be zero.") catch return null,
+            error.WrongTag => translate.throw(env, "Expected a different tag.") catch return null,
         }
     };
 }

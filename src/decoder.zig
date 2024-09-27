@@ -261,7 +261,23 @@ pub const Decoder = struct {
 
             //
 
-            .compressed => translate.throw(self.env, "Compressed data is not supported"), // TODO: implement?
+            .compressed => {
+                const dest_size = try self.read32();
+                var _dest_size: c_ulong = @intCast(dest_size);
+
+                const outBuffer = self.allocator.alloc(u8, dest_size) catch return translate.throw(self.env, "Out of memory");
+                defer self.allocator.free(outBuffer);
+
+                switch (c.uncompress(outBuffer.ptr, &_dest_size, self.buffer.ptr + self.index, self.buffer.len - self.index)) {
+                    c.Z_OK => {},
+                    else => return translate.throw(self.env, "Failed to uncompress"),
+                }
+
+                self.buffer = outBuffer;
+                self.index = 0;
+                return try self.decode();
+            },
+
             .distribution_header, .distribution_header_fragmented => translate.throw(self.env, "Distribution header is not supported"),
             .bit_binary => translate.throw(self.env, "Bit binary is not supported"), // maybe? no idea how to handle it
             .atom_cache_ref => translate.throw(self.env, "Atom cache ref is not supported"),
@@ -279,22 +295,14 @@ pub const Decoder = struct {
             return DecodeError.BufferSizeMismatch;
         }
 
-        const part_length = (length / 8) + @intFromBool(@mod(length, 8) > 0);
-        var parts: []u64 = self.allocator.alloc(u64, part_length) catch return translate.throw(self.env, "Out of memory");
+        const parts = self.allocator.alignedAlloc(u8, @alignOf(u64), ((length / 8) + 1) * 8) catch return translate.throw(self.env, "Out of memory");
         defer self.allocator.free(parts);
-        for (0..(length / 8)) |i| {
-            parts[i] = try self.read64Little();
-        }
+        @memset(parts, 0);
 
-        var last_part: u64 = 0;
-        for (0..@mod(length, 8)) |i| {
-            last_part |= @as(u64, try self.read8()) << @as(u6, @intCast(i * 8));
-        }
-        if (length % 8 != 0) {
-            parts[part_length - 1] = last_part;
-        }
+        std.mem.copyForwards(u8, parts, self.buffer[self.index .. self.index + length]);
+        self.index += length;
 
-        return translate.createBigintWords(self.env, sign, parts);
+        return translate.createBigintBytes(self.env, sign, parts);
     }
 
     fn decodeArray(self: *Decoder, length: u32) !c.napi_value {

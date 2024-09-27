@@ -4,7 +4,7 @@ const translate = @import("translate.zig");
 const decoder = @import("decoder.zig");
 
 export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi_value {
-    translate.registerFunction(env, exports, "decode", decodeWrapper) catch return null;
+    translate.registerFunction(env, exports, "unpack", decodeWrapper) catch return null;
     return exports;
 }
 

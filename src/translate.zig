@@ -136,6 +136,12 @@ pub fn createBigintWords(env: c.napi_env, sign: u8, words: []const u64) !c.napi_
     return result;
 }
 
+pub fn createBigintBytes(env: c.napi_env, sign: u8, bytes: []const u8) !c.napi_value {
+    var result: c.napi_value = undefined;
+    try maybeError(env, "Failed to create bigint", c.napi_create_bigint_words(env, sign, bytes.len / 8, @alignCast(@ptrCast(bytes.ptr)), &result));
+    return result;
+}
+
 // helpers
 
 pub fn registerFunction(

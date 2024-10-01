@@ -33,4 +33,5 @@ pub const Tag = enum(u8) {
     fun = 117,
     atom_utf8 = 118,
     small_atom_utf8 = 119,
+    _,
 };

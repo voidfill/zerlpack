@@ -43,9 +43,9 @@ pub const Decoder = struct {
             .small_integer => try translate.createInt32(self.env, @intCast(try self.read8())),
             .atom => try self.atomHelper(try self.slice(try self.read16())),
             .small_atom => try self.atomHelper(try self.slice(try self.read8())),
-            .atom_utf8 => try self.utf8AtomHelper(try self.slice(try self.read16())),
-            .small_atom_utf8 => try self.utf8AtomHelper(try self.slice(try self.read8())),
-            .binary => try translate.createStringFromSlice(self.env, try self.slice(try self.read32())),
+            .atom_utf8 => try self.atomHelper(try self.slice(try self.read16())),
+            .small_atom_utf8 => try self.atomHelper(try self.slice(try self.read8())),
+            .binary => try translate.createString(self.env, try self.slice(try self.read32())),
             .small_tuple => try self.decodeArray(try self.read8()),
             .large_tuple => try self.decodeArray(try self.read32()),
             .new_float => try translate.createDouble(self.env, @bitCast(try self.read64())),
@@ -315,7 +315,7 @@ pub const Decoder = struct {
 
     fn atomHelper(self: *Decoder, str: []const u8) !c.napi_value {
         if (str.len > 5) {
-            return translate.createStringFromSlice(self.env, str);
+            return translate.createString(self.env, str);
         }
 
         if (std.mem.eql(u8, str, "true")) {
@@ -328,25 +328,7 @@ pub const Decoder = struct {
             return self.global_null;
         }
 
-        return translate.createStringFromSlice(self.env, str);
-    }
-
-    fn utf8AtomHelper(self: *Decoder, str: []const u8) !c.napi_value {
-        if (str.len > 5) {
-            return translate.createUtf8StringFromSlice(self.env, str);
-        }
-
-        if (std.mem.eql(u8, str, "true")) {
-            return try translate.getBool(self.env, true);
-        }
-        if (std.mem.eql(u8, str, "false")) {
-            return try translate.getBool(self.env, false);
-        }
-        if (std.mem.eql(u8, str, "nil") or std.mem.eql(u8, str, "null")) {
-            return self.global_null;
-        }
-
-        return translate.createUtf8StringFromSlice(self.env, str);
+        return translate.createString(self.env, str);
     }
 
     fn read8(self: *Decoder) !u8 {
@@ -381,15 +363,6 @@ pub const Decoder = struct {
             return DecodeError.BufferSizeMismatch;
         }
         const result = std.mem.readInt(u64, @ptrCast(&self.buffer[self.index]), .big);
-        self.index += 8;
-        return result;
-    }
-
-    fn read64Little(self: *Decoder) !u64 {
-        if (self.index + 8 > self.buffer.len) {
-            return DecodeError.BufferSizeMismatch;
-        }
-        const result = std.mem.readInt(u64, @ptrCast(&self.buffer[self.index]), .little);
         self.index += 8;
         return result;
     }

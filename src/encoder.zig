@@ -48,11 +48,11 @@ pub const Encoder = struct {
     pub fn outputCompressed(self: *Encoder) !c.napi_value {
         defer self.allocator.free(self.buffer);
 
-        var destLen = c.compressBound(self.index - 1);
+        var destLen = c.compressBound(@intCast(self.index - 1));
         const dest = try self.allocator.alloc(u8, destLen + 6);
         defer self.allocator.free(dest);
 
-        switch (c.compress(dest.ptr + 6, &destLen, self.buffer.ptr + 1, self.index - 1)) {
+        switch (c.compress(dest.ptr + 6, &destLen, self.buffer.ptr + 1, @intCast(self.index - 1))) {
             c.Z_OK => {},
             else => return translate.throw(self.env, "Failed to compress"),
         }

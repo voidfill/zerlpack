@@ -268,7 +268,7 @@ pub const Decoder = struct {
                 const outBuffer = self.allocator.alloc(u8, dest_size) catch return translate.throw(self.env, "Out of memory");
                 defer self.allocator.free(outBuffer);
 
-                switch (c.uncompress(outBuffer.ptr, &_dest_size, self.buffer.ptr + self.index, self.buffer.len - self.index)) {
+                switch (c.uncompress(outBuffer.ptr, &_dest_size, self.buffer.ptr + self.index, @intCast(self.buffer.len - self.index))) {
                     c.Z_OK => {},
                     else => return translate.throw(self.env, "Failed to uncompress"),
                 }

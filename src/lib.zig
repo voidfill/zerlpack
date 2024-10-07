@@ -1,16 +1,18 @@
 const std = @import("std");
-const c = @import("c.zig");
+const napi = @import("napi.zig");
 const translate = @import("translate.zig");
 const decoder = @import("decoder.zig");
 const encoder = @import("encoder.zig");
 
-export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi_value {
+export fn napi_register_module_v1(env: napi.napi_env, exports: napi.napi_value) napi.napi_value {
+    translate.initialize() catch return null;
+
     translate.registerFunction(env, exports, "unpack", decodeWrapper) catch return null;
     translate.registerFunction(env, exports, "pack", encodeWrapper) catch return null;
     return exports;
 }
 
-fn decode(env: c.napi_env, info: c.napi_callback_info) !c.napi_value {
+fn decode(env: napi.napi_env, info: napi.napi_callback_info) !napi.napi_value {
     const arguments = try translate.extractArgs(env, info, 1);
     const buffer = try translate.getBufferInfo(env, arguments.argv[0]);
     if (buffer.len == 0) {
@@ -26,7 +28,7 @@ fn decode(env: c.napi_env, info: c.napi_callback_info) !c.napi_value {
     return ret;
 }
 
-fn decodeWrapper(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
+fn decodeWrapper(env: napi.napi_env, info: napi.napi_callback_info) callconv(.C) napi.napi_value {
     return decode(env, info) catch |e| {
         switch (e) {
             error.ExceptionThrown => return null, // only "rethrow" zig native errors
@@ -38,7 +40,7 @@ fn decodeWrapper(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.nap
     };
 }
 
-fn encode(env: c.napi_env, info: c.napi_callback_info) !c.napi_value {
+fn encode(env: napi.napi_env, info: napi.napi_callback_info) !napi.napi_value {
     const arguments = try translate.extractArgs(env, info, 2);
     if (arguments.argc == 0) {
         return translate.throw(env, "Expected at least one argument");
@@ -51,7 +53,7 @@ fn encode(env: c.napi_env, info: c.napi_callback_info) !c.napi_value {
     return if (do_compress) try enc.outputCompressed() else try enc.output();
 }
 
-fn encodeWrapper(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
+fn encodeWrapper(env: napi.napi_env, info: napi.napi_callback_info) callconv(.C) napi.napi_value {
     return encode(env, info) catch |e| {
         switch (e) {
             error.ExceptionThrown => return null, // only "rethrow" zig native errors

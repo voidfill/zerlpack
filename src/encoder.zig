@@ -1,7 +1,7 @@
 const std = @import("std");
-const c = @import("c.zig");
 const builtin = @import("builtin");
 const translate = @import("translate.zig");
+const napi = @import("napi.zig");
 const constants = @import("constants.zig");
 const Tag = constants.Tag;
 const native_endian = builtin.cpu.arch.endian();
@@ -25,10 +25,10 @@ fn maybeSwap(comptime to: std.builtin.Endian, value: anytype) @TypeOf(value) {
 pub const Encoder = struct {
     buffer: []u8,
     index: usize,
-    env: c.napi_env,
+    env: napi.napi_env,
     allocator: std.mem.Allocator,
 
-    pub fn init(env: c.napi_env, allocator: std.mem.Allocator) !Encoder {
+    pub fn init(env: napi.napi_env, allocator: std.mem.Allocator) !Encoder {
         var buffer = try allocator.alloc(u8, initial_buffer_size);
         buffer[0] = constants.format_version;
 
@@ -40,20 +40,20 @@ pub const Encoder = struct {
         };
     }
 
-    pub fn output(self: *Encoder) !c.napi_value {
+    pub fn output(self: *Encoder) !napi.napi_value {
         defer self.allocator.free(self.buffer);
         return translate.createArrayBuffer(self.env, self.buffer[0..self.index]);
     }
 
-    pub fn outputCompressed(self: *Encoder) !c.napi_value {
+    pub fn outputCompressed(self: *Encoder) !napi.napi_value {
         defer self.allocator.free(self.buffer);
 
-        var destLen = c.compressBound(@intCast(self.index - 1));
+        var destLen = translate.compressBound(@intCast(self.index - 1));
         const dest = try self.allocator.alloc(u8, destLen + 6);
         defer self.allocator.free(dest);
 
-        switch (c.compress(dest.ptr + 6, &destLen, self.buffer.ptr + 1, @intCast(self.index - 1))) {
-            c.Z_OK => {},
+        switch (translate.compress(dest.ptr + 6, &destLen, self.buffer.ptr + 1, @intCast(self.index - 1))) {
+            0 => {},
             else => return translate.throw(self.env, "Failed to compress"),
         }
 
@@ -83,31 +83,31 @@ pub const Encoder = struct {
         try self.append(bytes);
     }
 
-    pub fn encode(self: *Encoder, value: c.napi_value, _nestlimit: u16) !void {
+    pub fn encode(self: *Encoder, value: napi.napi_value, _nestlimit: u16) !void {
         const nestLimit = _nestlimit - 1;
         if (nestLimit == 0) {
             return translate.throw(self.env, "Reached nesting limit");
         }
 
         switch (try translate.typeof(self.env, value)) {
-            c.napi_undefined, c.napi_null => {
+            .undefined, .null => {
                 try self.append(&[_]u8{ @intFromEnum(Tag.small_atom_utf8), 3, 'n', 'i', 'l' });
             },
-            c.napi_boolean => {
+            .boolean => {
                 if (try translate.getBoolValue(self.env, value)) {
                     try self.append(&[_]u8{ @intFromEnum(Tag.small_atom_utf8), 4, 't', 'r', 'u', 'e' });
                 } else {
                     try self.append(&[_]u8{ @intFromEnum(Tag.small_atom_utf8), 5, 'f', 'a', 'l', 's', 'e' });
                 }
             },
-            c.napi_string => {
+            .string => {
                 const str = try translate.getStringUtf8Value(self.env, value, self.allocator);
                 defer self.allocator.free(str);
                 try self.append(&[_]u8{@intFromEnum(Tag.binary)});
                 try self.appendInt(u32, @intCast(str.len), .big);
                 try self.append(str);
             },
-            c.napi_object => {
+            .object => {
                 if (try translate.isArray(self.env, value)) {
                     const len = try translate.getArrayLength(self.env, value);
 
@@ -123,9 +123,9 @@ pub const Encoder = struct {
                     const keys = try translate.getAllPropertyNames(
                         self.env,
                         value,
-                        c.napi_key_own_only,
-                        c.napi_key_all_properties | c.napi_key_skip_symbols, // just skip symbols, not worth erroring on
-                        c.napi_key_keep_numbers,
+                        .own_only,
+                        @enumFromInt(@intFromEnum(napi.napi_key_filter.all_properties) | @intFromEnum(napi.napi_key_filter.skip_symbols)), // just skip symbols, not worth erroring on
+                        .keep_numbers,
                     );
                     const len = try translate.getArrayLength(self.env, keys);
 
@@ -139,7 +139,7 @@ pub const Encoder = struct {
                     }
                 }
             },
-            c.napi_bigint => {
+            .bigint => {
                 const v = try translate.getBigintValueBytes(self.env, value, self.allocator);
                 defer self.allocator.free(v.bytes);
 
@@ -160,7 +160,7 @@ pub const Encoder = struct {
                 try self.appendInt(u8, @intCast(v.sign), .big);
                 try self.append(v.bytes[0..real_len]);
             },
-            c.napi_number => {
+            .number => {
                 const d = try translate.getDoubleValue(self.env, value);
 
                 if (std.math.ceil(d) != d or d > std.math.maxInt(u32) or d < std.math.minInt(i32)) {
@@ -194,17 +194,15 @@ pub const Encoder = struct {
                 }
             },
 
-            c.napi_function => {
+            .function => {
                 return translate.throw(self.env, "Functions are not supported");
             },
-            c.napi_external => {
+            .external => {
                 return translate.throw(self.env, "Externals are not supported");
             },
-            c.napi_symbol => {
+            .symbol => {
                 return translate.throw(self.env, "Symbols are not supported");
             },
-
-            else => unreachable,
         }
     }
 };

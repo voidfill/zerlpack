@@ -1,8 +1,8 @@
 const std = @import("std");
-const c = @import("c.zig");
 const translate = @import("translate.zig");
 const constants = @import("constants.zig");
 const Tag = constants.Tag;
+const napi = @import("napi.zig");
 
 fn ensureOnlySignificantBits(comptime amount: u6, value: u64) bool {
     const mask: u64 = (@as(u64, 1) << amount) - 1;
@@ -13,12 +13,12 @@ const DecodeError = error{ BufferSizeMismatch, WrongFormatVersion, SignificantBi
 pub const Decoder = struct {
     buffer: []const u8,
     index: usize,
-    env: c.napi_env,
-    global_null: c.napi_value,
-    global_undefined: c.napi_value,
+    env: napi.napi_env,
+    global_null: napi.napi_value,
+    global_undefined: napi.napi_value,
     allocator: std.mem.Allocator,
 
-    pub fn init(buffer: []const u8, env: c.napi_env, allocator: std.mem.Allocator) !Decoder {
+    pub fn init(buffer: []const u8, env: napi.napi_env, allocator: std.mem.Allocator) !Decoder {
         var dec: Decoder = Decoder{
             .buffer = buffer,
             .index = 0,
@@ -35,7 +35,7 @@ pub const Decoder = struct {
         return dec;
     }
 
-    pub fn decode(self: *Decoder) DecodeError!c.napi_value {
+    pub fn decode(self: *Decoder) DecodeError!napi.napi_value {
         const tag: Tag = @enumFromInt(try self.read8());
         return switch (tag) {
             .nil => try translate.createArrayWithLength(self.env, 0),
@@ -268,8 +268,8 @@ pub const Decoder = struct {
                 const outBuffer = self.allocator.alloc(u8, dest_size) catch return translate.throw(self.env, "Out of memory");
                 defer self.allocator.free(outBuffer);
 
-                switch (c.uncompress(outBuffer.ptr, &_dest_size, self.buffer.ptr + self.index, self.buffer.len - self.index)) {
-                    c.Z_OK => {},
+                switch (translate.uncompress(outBuffer.ptr, &_dest_size, self.buffer.ptr + self.index, @intCast(self.buffer.len - self.index))) {
+                    0 => {},
                     else => return translate.throw(self.env, "Failed to uncompress"),
                 }
 
@@ -289,13 +289,13 @@ pub const Decoder = struct {
         return self.index == self.buffer.len;
     }
 
-    fn decodeBig(self: *Decoder, length: u32) !c.napi_value {
+    fn decodeBig(self: *Decoder, length: u32) !napi.napi_value {
         const sign = try self.read8();
         if (self.index + length > self.buffer.len) {
             return DecodeError.BufferSizeMismatch;
         }
 
-        const parts = self.allocator.alignedAlloc(u8, @alignOf(u64), ((length / 8) + 1) * 8) catch return translate.throw(self.env, "Out of memory");
+        const parts: []align(@alignOf(u64)) u8 = self.allocator.alignedAlloc(u8, @alignOf(u64), ((length / 8) + 1) * 8) catch return translate.throw(self.env, "Out of memory");
         defer self.allocator.free(parts);
         @memset(parts, 0);
 
@@ -305,7 +305,7 @@ pub const Decoder = struct {
         return translate.createBigintBytes(self.env, sign, parts);
     }
 
-    fn decodeArray(self: *Decoder, length: u32) !c.napi_value {
+    fn decodeArray(self: *Decoder, length: u32) !napi.napi_value {
         const arr = try translate.createArrayWithLength(self.env, @intCast(length));
         for (0..length) |i| {
             try translate.setElement(self.env, arr, @intCast(i), try self.decode());
@@ -313,7 +313,7 @@ pub const Decoder = struct {
         return arr;
     }
 
-    fn atomHelper(self: *Decoder, str: []const u8) !c.napi_value {
+    fn atomHelper(self: *Decoder, str: []const u8) !napi.napi_value {
         if (str.len > 5) {
             return translate.createString(self.env, str);
         }

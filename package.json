@@ -4,8 +4,7 @@
 	"description": "erlpack encoder/decoder written in zig",
 	"main": "index.js",
 	"scripts": {
-		"test": "vitest",
-		"postinstall": "node scripts/downloadHeaders.js && zig build -Drelease"
+		"test": "vitest"
 	},
 	"keywords": [],
 	"author": "",
@@ -14,7 +13,5 @@
 		"vite": "^5.4.7",
 		"vitest": "^2.1.1"
 	},
-	"dependencies": {
-		"tar": "^7.4.3"
-	}
+	"files": ["zig-out", "index.js", "index.d.ts"]
 }

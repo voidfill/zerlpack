@@ -1,5 +1,6 @@
 const std = @import("std");
 const translate = @import("translate.zig");
+const shim = @import("shim.zig");
 const constants = @import("constants.zig");
 const Tag = constants.Tag;
 const napi = @import("napi.zig");
@@ -268,7 +269,7 @@ pub const Decoder = struct {
                 const outBuffer = self.allocator.alloc(u8, dest_size) catch return translate.throw(self.env, "Out of memory");
                 defer self.allocator.free(outBuffer);
 
-                switch (translate.uncompress(outBuffer.ptr, &_dest_size, self.buffer.ptr + self.index, @intCast(self.buffer.len - self.index))) {
+                switch (shim.uncompress(outBuffer.ptr, &_dest_size, self.buffer.ptr + self.index, @intCast(self.buffer.len - self.index))) {
                     0 => {},
                     else => return translate.throw(self.env, "Failed to uncompress"),
                 }

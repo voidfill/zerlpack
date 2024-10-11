@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const translate = @import("translate.zig");
 const napi = @import("napi.zig");
+const shim = @import("shim.zig");
 const constants = @import("constants.zig");
 const Tag = constants.Tag;
 const native_endian = builtin.cpu.arch.endian();
@@ -48,11 +49,11 @@ pub const Encoder = struct {
     pub fn outputCompressed(self: *Encoder) !napi.napi_value {
         defer self.allocator.free(self.buffer);
 
-        var destLen = translate.compressBound(@intCast(self.index - 1));
+        var destLen = shim.compressBound(@intCast(self.index - 1));
         const dest = try self.allocator.alloc(u8, destLen + 6);
         defer self.allocator.free(dest);
 
-        switch (translate.compress(dest.ptr + 6, &destLen, self.buffer.ptr + 1, @intCast(self.index - 1))) {
+        switch (shim.compress(dest.ptr + 6, &destLen, self.buffer.ptr + 1, @intCast(self.index - 1))) {
             0 => {},
             else => return translate.throw(self.env, "Failed to compress"),
         }

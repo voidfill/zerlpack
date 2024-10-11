@@ -3,9 +3,10 @@ const napi = @import("napi.zig");
 const translate = @import("translate.zig");
 const decoder = @import("decoder.zig");
 const encoder = @import("encoder.zig");
+const shim = @import("shim.zig");
 
 export fn napi_register_module_v1(env: napi.napi_env, exports: napi.napi_value) napi.napi_value {
-    translate.initialize() catch return null;
+    shim.initialize();
 
     translate.registerFunction(env, exports, "unpack", decodeWrapper) catch return null;
     translate.registerFunction(env, exports, "pack", encodeWrapper) catch return null;

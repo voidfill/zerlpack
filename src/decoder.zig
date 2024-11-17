@@ -1,31 +1,26 @@
 const std = @import("std");
-const translate = @import("translate.zig");
-const shim = @import("shim.zig");
 const constants = @import("constants.zig");
 const Tag = constants.Tag;
-const napi = @import("napi.zig");
+const znapi = @import("znapi");
+const napi = znapi.napi;
 
 fn ensureOnlySignificantBits(comptime amount: u6, value: u64) bool {
     const mask: u64 = (@as(u64, 1) << amount) - 1;
     return (value & mask) == value;
 }
 
-const DecodeError = error{ BufferSizeMismatch, WrongFormatVersion, SignificantBitError, WrongTag } || translate.TranslationError;
+const DecodeError = error{ BufferSizeMismatch, WrongFormatVersion, SignificantBitError, WrongTag } || znapi.napi_error || znapi.Ctx.TranslationError;
 pub const Decoder = struct {
     buffer: []const u8,
     index: usize,
-    env: napi.napi_env,
-    global_null: napi.napi_value,
-    global_undefined: napi.napi_value,
+    ctx: *znapi.Ctx,
     allocator: std.mem.Allocator,
 
-    pub fn init(buffer: []const u8, env: napi.napi_env, allocator: std.mem.Allocator) !Decoder {
+    pub fn init(buffer: []const u8, ctx: *znapi.Ctx, allocator: std.mem.Allocator) !Decoder {
         var dec: Decoder = Decoder{
             .buffer = buffer,
             .index = 0,
-            .env = env,
-            .global_null = try translate.getNull(env),
-            .global_undefined = try translate.getUndefined(env),
+            .ctx = ctx,
             .allocator = allocator,
         };
         const format_version = try dec.read8();
@@ -37,44 +32,46 @@ pub const Decoder = struct {
     }
 
     pub fn decode(self: *Decoder) DecodeError!napi.napi_value {
+        const ctx = self.ctx;
+
         const tag: Tag = @enumFromInt(try self.read8());
         return switch (tag) {
-            .nil => try translate.createArrayWithLength(self.env, 0),
-            .integer => try translate.createInt32(self.env, @bitCast(try self.read32())),
-            .small_integer => try translate.createInt32(self.env, @intCast(try self.read8())),
+            .nil => try ctx.createArray(0),
+            .integer => try ctx.createInt32(@bitCast(try self.read32())),
+            .small_integer => try ctx.createInt32(@intCast(try self.read8())),
             .atom => try self.atomHelper(try self.slice(try self.read16())),
             .small_atom => try self.atomHelper(try self.slice(try self.read8())),
             .atom_utf8 => try self.atomHelper(try self.slice(try self.read16())),
             .small_atom_utf8 => try self.atomHelper(try self.slice(try self.read8())),
-            .binary => try translate.createString(self.env, try self.slice(try self.read32())),
+            .binary => try ctx.createString(try self.slice(try self.read32())),
             .small_tuple => try self.decodeArray(try self.read8()),
             .large_tuple => try self.decodeArray(try self.read32()),
-            .new_float => try translate.createDouble(self.env, @bitCast(try self.read64())),
+            .new_float => try ctx.createDouble(@bitCast(try self.read64())),
             .small_big => try self.decodeBig(try self.read8()),
             .large_big => try self.decodeBig(try self.read32()),
             .list => {
                 const arr = try self.decodeArray(try self.read32());
                 const tail: Tag = @enumFromInt(try self.read8());
                 if (tail != .nil) {
-                    return translate.throw(self.env, "Invalid tail");
+                    return ctx.throw("Invalid tail");
                 }
                 return arr;
             },
             .map => {
-                const map = try translate.createObject(self.env);
+                const map = try ctx.createObject();
                 for (0..try self.read32()) |i| {
                     _ = i;
                     const key = try self.decode();
                     const value = try self.decode();
-                    try translate.setProperty(self.env, map, key, value);
+                    try ctx.setProperty(map, key, value);
                 }
                 return map;
             },
             .string => { // yes, a string is just an array of integers..
                 const len = try self.read16();
-                const arr = try translate.createArrayWithLength(self.env, len);
+                const arr = try ctx.createArray(len);
                 for (0..len) |i| {
-                    try translate.setElement(self.env, arr, @intCast(i), try translate.createInt32(self.env, try self.read8()));
+                    try ctx.setElement(arr, @intCast(i), try self.ctx.createInt32(try self.read8()));
                 }
                 return arr;
             },
@@ -83,179 +80,179 @@ pub const Decoder = struct {
                 // cut off null bytes
                 const maybe_null_index = std.mem.indexOfScalar(u8, bytes, 0) orelse 31;
 
-                const float = std.fmt.parseFloat(f64, bytes[0..maybe_null_index]) catch return translate.throw(self.env, "Failed to parse old float");
-                return translate.createDouble(self.env, float);
+                const float = std.fmt.parseFloat(f64, bytes[0..maybe_null_index]) catch return ctx.throw("Failed to parse old float");
+                return ctx.createDouble(float);
             },
 
             //
 
             .reference => {
-                const obj = try translate.createObject(self.env);
+                const obj = try ctx.createObject();
 
                 try ensureNextTagAnyAtom(self);
-                try translate.setNamedProperty(self.env, obj, "node", try self.decode());
+                try ctx.setNamedProperty(obj, "node", try self.decode());
 
-                const ids = try translate.createArrayWithLength(self.env, 1);
+                const ids = try ctx.createArray(1);
                 const id = try self.read32();
                 if (!ensureOnlySignificantBits(18, id)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setElement(self.env, ids, 0, try translate.createUint32(self.env, id));
+                try ctx.setElement(ids, 0, try self.ctx.createUint32(id));
 
-                try translate.setNamedProperty(self.env, obj, "id", ids);
+                try ctx.setNamedProperty(obj, "id", ids);
 
                 const creation = try self.read8();
                 if (!ensureOnlySignificantBits(2, creation)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setNamedProperty(self.env, obj, "creation", try translate.createUint32(self.env, creation));
+                try ctx.setNamedProperty(obj, "creation", try self.ctx.createUint32(creation));
 
                 return obj;
             },
             .new_reference => {
                 const len = try self.read16();
                 if (len > 3) {
-                    return translate.throw(self.env, "Invalid length for new_reference id");
+                    return ctx.throw("Invalid length for new_reference id");
                 }
 
-                const obj = try translate.createObject(self.env);
+                const obj = try ctx.createObject();
 
                 try ensureNextTagAnyAtom(self);
-                try translate.setNamedProperty(self.env, obj, "node", try self.decode());
+                try ctx.setNamedProperty(obj, "node", try self.decode());
 
                 const creation = try self.read8();
                 if (!ensureOnlySignificantBits(2, creation)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setNamedProperty(self.env, obj, "creation", try translate.createUint32(self.env, creation));
+                try ctx.setNamedProperty(obj, "creation", try ctx.createUint32(creation));
 
-                const ids = try translate.createArrayWithLength(self.env, len);
+                const ids = try ctx.createArray(len);
                 for (0..len) |i| {
                     if (i == 0) {
                         const id = try self.read32();
                         if (!ensureOnlySignificantBits(18, id)) {
                             return DecodeError.SignificantBitError;
                         }
-                        try translate.setElement(self.env, ids, @intCast(i), try translate.createUint32(self.env, id));
+                        try ctx.setElement(ids, @intCast(i), try ctx.createUint32(id));
                     } else {
-                        try translate.setElement(self.env, ids, @intCast(i), try translate.createUint32(self.env, @bitCast(try self.read32())));
+                        try ctx.setElement(ids, @intCast(i), try ctx.createUint32(@bitCast(try self.read32())));
                     }
                 }
-                try translate.setNamedProperty(self.env, obj, "id", ids);
+                try ctx.setNamedProperty(obj, "id", ids);
 
                 return obj;
             },
             .newer_reference => {
                 const len = try self.read16();
                 if (len > 3) {
-                    return translate.throw(self.env, "Invalid length for newer_reference id");
+                    return ctx.throw("Invalid length for newer_reference id");
                 }
 
-                const obj = try translate.createObject(self.env);
+                const obj = try ctx.createObject();
 
                 try ensureNextTagAnyAtom(self);
-                try translate.setNamedProperty(self.env, obj, "node", try self.decode());
+                try ctx.setNamedProperty(obj, "node", try self.decode());
 
-                try translate.setNamedProperty(self.env, obj, "creation", try translate.createInt32(self.env, try self.read8()));
+                try ctx.setNamedProperty(obj, "creation", try ctx.createInt32(try self.read8()));
 
-                const ids = try translate.createArrayWithLength(self.env, len);
+                const ids = try ctx.createArray(len);
                 for (0..len) |i| {
-                    try translate.setElement(self.env, ids, @intCast(i), try translate.createUint32(self.env, @bitCast(try self.read32())));
+                    try ctx.setElement(ids, @intCast(i), try ctx.createUint32(@bitCast(try self.read32())));
                 }
-                try translate.setNamedProperty(self.env, obj, "id", ids);
+                try ctx.setNamedProperty(obj, "id", ids);
 
                 return obj;
             },
             .port => {
-                const obj = try translate.createObject(self.env);
+                const obj = try ctx.createObject();
                 try ensureNextTagAnyAtom(self);
-                try translate.setNamedProperty(self.env, obj, "node", try self.decode());
+                try ctx.setNamedProperty(obj, "node", try self.decode());
 
                 const id = try self.read32();
                 if (!ensureOnlySignificantBits(28, id)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setNamedProperty(self.env, obj, "id", try translate.createUint32(self.env, id));
+                try ctx.setNamedProperty(obj, "id", try ctx.createUint32(id));
 
                 const creation = try self.read8();
                 if (!ensureOnlySignificantBits(2, creation)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setNamedProperty(self.env, obj, "creation", try translate.createUint32(self.env, creation));
+                try ctx.setNamedProperty(obj, "creation", try ctx.createUint32(creation));
 
                 return obj;
             },
             .new_port => {
-                const obj = try translate.createObject(self.env);
+                const obj = try ctx.createObject();
                 try ensureNextTagAnyAtom(self);
-                try translate.setNamedProperty(self.env, obj, "node", try self.decode());
+                try ctx.setNamedProperty(obj, "node", try self.decode());
 
                 const id = try self.read32();
                 if (!ensureOnlySignificantBits(28, id)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setNamedProperty(self.env, obj, "id", try translate.createUint32(self.env, id));
+                try ctx.setNamedProperty(obj, "id", try ctx.createUint32(id));
 
-                try translate.setNamedProperty(self.env, obj, "creation", try translate.createUint32(self.env, try self.read32()));
+                try ctx.setNamedProperty(obj, "creation", try ctx.createUint32(try self.read32()));
                 return obj;
             },
             .pid => {
-                const obj = try translate.createObject(self.env);
+                const obj = try ctx.createObject();
                 try ensureNextTagAnyAtom(self);
-                try translate.setNamedProperty(self.env, obj, "node", try self.decode());
+                try ctx.setNamedProperty(obj, "node", try self.decode());
 
                 const id = try self.read32();
                 if (!ensureOnlySignificantBits(15, id)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setNamedProperty(self.env, obj, "id", try translate.createUint32(self.env, id));
+                try ctx.setNamedProperty(obj, "id", try ctx.createUint32(id));
 
                 const serial = try self.read32();
                 if (!ensureOnlySignificantBits(13, serial)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setNamedProperty(self.env, obj, "serial", try translate.createUint32(self.env, serial));
+                try ctx.setNamedProperty(obj, "serial", try ctx.createUint32(serial));
 
                 const creation = try self.read8();
                 if (!ensureOnlySignificantBits(2, creation)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setNamedProperty(self.env, obj, "creation", try translate.createUint32(self.env, creation));
+                try ctx.setNamedProperty(obj, "creation", try ctx.createUint32(creation));
 
                 return obj;
             },
             .new_pid => {
-                const obj = try translate.createObject(self.env);
+                const obj = try ctx.createObject();
 
                 try ensureNextTagAnyAtom(self);
-                try translate.setNamedProperty(self.env, obj, "node", try self.decode());
+                try ctx.setNamedProperty(obj, "node", try self.decode());
 
                 const id = try self.read32();
                 if (!ensureOnlySignificantBits(15, id)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setNamedProperty(self.env, obj, "id", try translate.createUint32(self.env, id));
+                try ctx.setNamedProperty(obj, "id", try ctx.createUint32(id));
 
                 const serial = try self.read32();
                 if (!ensureOnlySignificantBits(13, serial)) {
                     return DecodeError.SignificantBitError;
                 }
-                try translate.setNamedProperty(self.env, obj, "serial", try translate.createUint32(self.env, serial));
+                try ctx.setNamedProperty(obj, "serial", try ctx.createUint32(serial));
 
-                try translate.setNamedProperty(self.env, obj, "creation", try translate.createUint32(self.env, try self.read32()));
+                try ctx.setNamedProperty(obj, "creation", try ctx.createUint32(try self.read32()));
                 return obj;
             },
             .export_ext => {
-                const obj = try translate.createObject(self.env);
+                const obj = try ctx.createObject();
 
                 try self.ensureNextTagAnyAtom();
-                try translate.setNamedProperty(self.env, obj, "mod", try self.decode());
+                try ctx.setNamedProperty(obj, "mod", try self.decode());
 
                 try self.ensureNextTagAnyAtom();
-                try translate.setNamedProperty(self.env, obj, "fun", try self.decode());
+                try ctx.setNamedProperty(obj, "fun", try self.decode());
 
                 try self.ensureNextTagOneOf(&.{.small_integer});
-                try translate.setNamedProperty(self.env, obj, "arity", try self.decode());
+                try ctx.setNamedProperty(obj, "arity", try self.decode());
 
                 return obj;
             },
@@ -266,12 +263,12 @@ pub const Decoder = struct {
                 const dest_size = try self.read32();
                 var _dest_size: c_ulong = @intCast(dest_size);
 
-                const outBuffer = self.allocator.alloc(u8, dest_size) catch return translate.throw(self.env, "Out of memory");
+                const outBuffer = self.allocator.alloc(u8, dest_size) catch return ctx.throw("Out of memory");
                 defer self.allocator.free(outBuffer);
 
-                switch (shim.uncompress(outBuffer.ptr, &_dest_size, self.buffer.ptr + self.index, @intCast(self.buffer.len - self.index))) {
+                switch (znapi.raw.uncompress(outBuffer.ptr, &_dest_size, self.buffer.ptr + self.index, @intCast(self.buffer.len - self.index))) {
                     0 => {},
-                    else => return translate.throw(self.env, "Failed to uncompress"),
+                    else => return ctx.throw("Failed to uncompress"),
                 }
 
                 self.buffer = outBuffer;
@@ -279,10 +276,10 @@ pub const Decoder = struct {
                 return try self.decode();
             },
 
-            .distribution_header, .distribution_header_fragmented => translate.throw(self.env, "Distribution header is not supported"),
-            .bit_binary => translate.throw(self.env, "Bit binary is not supported"), // maybe? no idea how to handle it
-            .atom_cache_ref => translate.throw(self.env, "Atom cache ref is not supported"),
-            else => translate.throw(self.env, "Unknown tag"),
+            .distribution_header, .distribution_header_fragmented => ctx.throw("Distribution header is not supported"),
+            .bit_binary => ctx.throw("Bit binary is not supported"), // maybe? no idea how to handle it
+            .atom_cache_ref => ctx.throw("Atom cache ref is not supported"),
+            else => ctx.throw("Unknown tag"),
         };
     }
 
@@ -296,40 +293,41 @@ pub const Decoder = struct {
             return DecodeError.BufferSizeMismatch;
         }
 
-        const parts: []align(@alignOf(u64)) u8 = self.allocator.alignedAlloc(u8, @alignOf(u64), ((length / 8) + 1) * 8) catch return translate.throw(self.env, "Out of memory");
+        const parts: []align(@alignOf(u64)) u8 = self.allocator.alignedAlloc(u8, @alignOf(u64), ((length / 8) + 1) * 8) catch return self.ctx.throw("Out of memory");
         defer self.allocator.free(parts);
         @memset(parts, 0);
 
         std.mem.copyForwards(u8, parts, self.buffer[self.index .. self.index + length]);
         self.index += length;
 
-        return translate.createBigintBytes(self.env, sign, parts);
+        return self.ctx.createBigintBytes(sign != 0, parts);
     }
 
     fn decodeArray(self: *Decoder, length: u32) !napi.napi_value {
-        const arr = try translate.createArrayWithLength(self.env, @intCast(length));
+        const arr = try self.ctx.createArray(@intCast(length));
         for (0..length) |i| {
-            try translate.setElement(self.env, arr, @intCast(i), try self.decode());
+            try self.ctx.setElement(arr, @intCast(i), try self.decode());
         }
         return arr;
     }
 
     fn atomHelper(self: *Decoder, str: []const u8) !napi.napi_value {
+        const ctx = self.ctx;
         if (str.len > 5) {
-            return translate.createString(self.env, str);
+            return ctx.createString(str);
         }
 
         if (std.mem.eql(u8, str, "true")) {
-            return try translate.getBool(self.env, true);
+            return try ctx.createBoolean(true);
         }
         if (std.mem.eql(u8, str, "false")) {
-            return try translate.getBool(self.env, false);
+            return try ctx.createBoolean(false);
         }
         if (std.mem.eql(u8, str, "nil") or std.mem.eql(u8, str, "null")) {
-            return self.global_null;
+            return ctx.null;
         }
 
-        return translate.createString(self.env, str);
+        return ctx.createString(str);
     }
 
     fn read8(self: *Decoder) !u8 {

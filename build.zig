@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) !void {
-    const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = std.builtin.OptimizeMode.ReleaseSmall });
+    const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSmall });
 
     const targets: []const std.Target.Query = &.{
         .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .gnu },
@@ -26,6 +26,12 @@ pub fn build(b: *std.Build) !void {
             .link_libc = true,
         });
         lib.linker_allow_shlib_undefined = true;
+
+        const znd = b.dependency("znapi", .{
+            .target = target,
+            .optimize = optimize,
+        });
+        lib.root_module.addImport("znapi", znd.module("znapi"));
 
         const output = b.addInstallFileWithDir(lib.getEmittedBin(), .{ .custom = try target.zigTriple(b.allocator) }, "zerlpack.node");
         b.getInstallStep().dependOn(&output.step);

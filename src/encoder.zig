@@ -1,11 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const translate = @import("translate.zig");
-const napi = @import("napi.zig");
-const shim = @import("shim.zig");
 const constants = @import("constants.zig");
 const Tag = constants.Tag;
 const native_endian = builtin.cpu.arch.endian();
+const znapi = @import("znapi");
+const napi = znapi.napi;
 
 const initial_buffer_size = std.mem.page_size;
 
@@ -26,36 +25,37 @@ fn maybeSwap(comptime to: std.builtin.Endian, value: anytype) @TypeOf(value) {
 pub const Encoder = struct {
     buffer: []u8,
     index: usize,
-    env: napi.napi_env,
+    ctx: *znapi.Ctx,
     allocator: std.mem.Allocator,
 
-    pub fn init(env: napi.napi_env, allocator: std.mem.Allocator) !Encoder {
+    pub fn init(ctx: *znapi.Ctx, allocator: std.mem.Allocator) !Encoder {
         var buffer = try allocator.alloc(u8, initial_buffer_size);
         buffer[0] = constants.format_version;
 
         return Encoder{
             .buffer = buffer,
             .index = 1,
-            .env = env,
+            .ctx = ctx,
             .allocator = allocator,
         };
     }
 
     pub fn output(self: *Encoder) !napi.napi_value {
         defer self.allocator.free(self.buffer);
-        return translate.createArrayBuffer(self.env, self.buffer[0..self.index]);
+        return self.ctx.createArrayBuffer(self.buffer[0..self.index]);
     }
 
     pub fn outputCompressed(self: *Encoder) !napi.napi_value {
+        const ctx = self.ctx;
         defer self.allocator.free(self.buffer);
 
-        var destLen = shim.compressBound(@intCast(self.index - 1));
+        var destLen = znapi.raw.compressBound(@intCast(self.index - 1));
         const dest = try self.allocator.alloc(u8, destLen + 6);
         defer self.allocator.free(dest);
 
-        switch (shim.compress(dest.ptr + 6, &destLen, self.buffer.ptr + 1, @intCast(self.index - 1))) {
+        switch (znapi.raw.compress(dest.ptr + 6, &destLen, self.buffer.ptr + 1, @intCast(self.index - 1))) {
             0 => {},
-            else => return translate.throw(self.env, "Failed to compress"),
+            else => return ctx.throw("Failed to compress"),
         }
 
         dest[0] = constants.format_version;
@@ -66,7 +66,7 @@ pub const Encoder = struct {
         dest[4] = @intCast(uncompressedSize >> 8 & 0xFF);
         dest[5] = @intCast(uncompressedSize & 0xFF);
 
-        return translate.createArrayBuffer(self.env, dest[0 .. destLen + 6]);
+        return ctx.createArrayBuffer(dest[0 .. destLen + 6]);
     }
 
     fn append(self: *Encoder, data: []const u8) !void {
@@ -85,63 +85,63 @@ pub const Encoder = struct {
     }
 
     pub fn encode(self: *Encoder, value: napi.napi_value, _nestlimit: u16) !void {
+        const ctx = self.ctx;
         const nestLimit = _nestlimit - 1;
         if (nestLimit == 0) {
-            return translate.throw(self.env, "Reached nesting limit");
+            return ctx.throw("Reached nesting limit");
         }
 
-        switch (try translate.typeof(self.env, value)) {
+        switch (try ctx.napiTypeOf(value)) {
             .undefined, .null => {
                 try self.append(&[_]u8{ @intFromEnum(Tag.small_atom_utf8), 3, 'n', 'i', 'l' });
             },
             .boolean => {
-                if (try translate.getBoolValue(self.env, value)) {
+                if (try ctx.getBool(value)) {
                     try self.append(&[_]u8{ @intFromEnum(Tag.small_atom_utf8), 4, 't', 'r', 'u', 'e' });
                 } else {
                     try self.append(&[_]u8{ @intFromEnum(Tag.small_atom_utf8), 5, 'f', 'a', 'l', 's', 'e' });
                 }
             },
             .string => {
-                const str = try translate.getStringUtf8Value(self.env, value, self.allocator);
+                const str = try ctx.getStringUtf8(value, self.allocator);
                 defer self.allocator.free(str);
                 try self.append(&[_]u8{@intFromEnum(Tag.binary)});
                 try self.appendInt(u32, @intCast(str.len), .big);
                 try self.append(str);
             },
             .object => {
-                if (try translate.isArray(self.env, value)) {
-                    const len = try translate.getArrayLength(self.env, value);
+                if (try ctx.isArray(value)) {
+                    const len = try ctx.getArrayLength(value);
 
                     try self.append(&[_]u8{@intFromEnum(Tag.list)});
                     try self.appendInt(u32, len, .big);
 
                     for (0..len) |i| {
-                        try self.encode(try translate.getElement(self.env, value, @intCast(i)), nestLimit);
+                        try self.encode(try ctx.getElement(value, @intCast(i)), nestLimit);
                     }
 
                     try self.append(&[_]u8{@intFromEnum(Tag.nil)});
                 } else {
-                    const keys = try translate.getAllPropertyNames(
-                        self.env,
+                    const keys = try ctx.getAllPropertyNames(
                         value,
                         .own_only,
                         @enumFromInt(@intFromEnum(napi.napi_key_filter.all_properties) | @intFromEnum(napi.napi_key_filter.skip_symbols)), // just skip symbols, not worth erroring on
                         .keep_numbers,
                     );
-                    const len = try translate.getArrayLength(self.env, keys);
+                    const len = try ctx.getArrayLength(keys);
 
                     try self.append(&[_]u8{@intFromEnum(Tag.map)});
                     try self.appendInt(u32, len, .big);
 
                     for (0..len) |i| {
-                        const key = try translate.getElement(self.env, keys, @intCast(i));
+                        const key = try ctx.getElement(keys, @intCast(i));
                         try self.encode(key, nestLimit);
-                        try self.encode(try translate.getProperty(self.env, value, key), nestLimit);
+                        try self.encode(try ctx.getProperty2(value, key), nestLimit);
                     }
                 }
             },
             .bigint => {
-                const v = try translate.getBigintValueBytes(self.env, value, self.allocator);
+                const v = try ctx.getBigintBytes(value, self.allocator);
                 defer self.allocator.free(v.bytes);
 
                 // cut off null bytes
@@ -158,11 +158,11 @@ pub const Encoder = struct {
                     try self.append(&[_]u8{@intCast(real_len)});
                 }
 
-                try self.appendInt(u8, @intCast(v.sign), .big);
+                try self.appendInt(u8, @intFromBool(v.sign), .big);
                 try self.append(v.bytes[0..real_len]);
             },
             .number => {
-                const d = try translate.getDoubleValue(self.env, value);
+                const d = try ctx.getDouble(value);
 
                 if (std.math.ceil(d) != d or d > std.math.maxInt(u32) or d < std.math.minInt(i32)) {
                     try self.append(&[_]u8{@intFromEnum(Tag.new_float)});
@@ -196,13 +196,13 @@ pub const Encoder = struct {
             },
 
             .function => {
-                return translate.throw(self.env, "Functions are not supported");
+                return ctx.throw("Functions are not supported");
             },
             .external => {
-                return translate.throw(self.env, "Externals are not supported");
+                return ctx.throw("Externals are not supported");
             },
             .symbol => {
-                return translate.throw(self.env, "Symbols are not supported");
+                return ctx.throw("Symbols are not supported");
             },
         }
     }

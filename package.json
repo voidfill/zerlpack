@@ -1,6 +1,6 @@
 {
 	"name": "zerlpack",
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"description": "erlpack encoder/decoder written in zig",
 	"main": "index.js",
 	"scripts": {

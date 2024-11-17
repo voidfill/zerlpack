@@ -2,10 +2,6 @@ import { expect, test } from "vitest";
 
 const zerl = require("../index.js");
 
-test("Fails without arguments", () => {
-	expect(() => zerl.pack()).toThrowError("Expected at least one argument");
-});
-
 test("Fails to pack functions", () => {
 	expect(() => zerl.pack(() => { })).toThrowError("Functions are not supported");
 });
@@ -16,6 +12,7 @@ test("Fails to pack Symbols", () => {
 
 test("Packs undefined", () => {
 	expect(zerl.pack(undefined)).toEqual(Buffer.from([131, 119, 3, 110, 105, 108]));
+	expect(zerl.pack()).toEqual(Buffer.from([131, 119, 3, 110, 105, 108]));
 });
 
 test("Packs null", () => {

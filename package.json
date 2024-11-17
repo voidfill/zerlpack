@@ -1,12 +1,12 @@
 {
 	"name": "zerlpack",
 	"version": "0.0.2",
-	"description": "erlpack encoder/decoder written in zig",
+	"description": "Erlang term format un/packer written in zig",
 	"main": "index.js",
 	"scripts": {
 		"test": "vitest"
 	},
-	"keywords": [],
+	"keywords": ["zig", "erlpack", "etf"],
 	"author": "",
 	"devDependencies": {
 		"@types/node": "^22.5.5",

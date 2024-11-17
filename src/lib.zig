@@ -16,13 +16,13 @@ comptime {
 }
 
 fn decode(ctx: *znapi.Ctx, cbi: napi.napi_callback_info) !napi.napi_value {
-    const args = try ctx.getCbArgs(cbi, 1);
+    const args = try ctx.parseArgs(struct { napi.napi_value, ?decoder.DecodeOptions }, cbi, null);
     const buffer = try ctx.getBufferInfo(args[0]);
     if (buffer.len == 0) {
         return ctx.throw("Buffer is empty");
     }
 
-    var dec: decoder.Decoder = try decoder.Decoder.init(buffer, ctx, std.heap.c_allocator);
+    var dec: decoder.Decoder = try decoder.Decoder.init(buffer, ctx, std.heap.c_allocator, args[1] orelse .{});
     const ret = try dec.decode();
 
     if (!dec.hasReadToCompletion()) {
@@ -33,10 +33,10 @@ fn decode(ctx: *znapi.Ctx, cbi: napi.napi_callback_info) !napi.napi_value {
 }
 
 fn encode(ctx: *znapi.Ctx, cbi: napi.napi_callback_info) !napi.napi_value {
-    const args = try ctx.parseArgs(struct { napi.napi_value, ?bool }, cbi, null);
+    const args = try ctx.parseArgs(struct { napi.napi_value, ?struct { compress: ?bool } }, cbi, null);
 
     var enc: encoder.Encoder = try encoder.Encoder.init(ctx, std.heap.c_allocator);
     try enc.encode(args[0], 256);
 
-    return if (args[1] orelse false) enc.outputCompressed() else enc.output();
+    return if (if (args[1]) |opts| opts.compress orelse false else false) enc.outputCompressed() else enc.output();
 }

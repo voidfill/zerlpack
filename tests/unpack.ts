@@ -2,8 +2,8 @@ import { expect, test } from "vitest";
 
 const zerl = require("../index.js");
 
-function unp(array: number[]) {
-	return zerl.unpack(new Uint8Array(array));
+function unp(array: number[], options?: { bigintsAsStrings?: boolean }) {
+	return zerl.unpack(new Uint8Array(array), options);
 }
 
 function unpBin(binary: string) {
@@ -134,7 +134,7 @@ test("Unpacks small Big", () => {
 	expect(unp([131, 110, 1, 1, 1])).toEqual(-1n);
 
 	expect(unp([131, 110, 0, 0])).toEqual(0n);
-	expect(unp([131, 110, 0, 1])).toEqual(-0n);
+	expect(unp([131, 110, 0, 1])).toEqual(0n);
 
 	expect(unp([131, 110, 9, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])).toEqual(1n);
 	expect(unp([131, 110, 9, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0])).toEqual(257n);
@@ -150,7 +150,7 @@ test("Unpacks large Big", () => {
 	expect(unp([131, 111, 0, 0, 0, 1, 1, 1])).toEqual(-1n);
 
 	expect(unp([131, 111, 0, 0, 0, 0, 0])).toEqual(0n);
-	expect(unp([131, 111, 0, 0, 0, 0, 1])).toEqual(-0n);
+	expect(unp([131, 111, 0, 0, 0, 0, 1])).toEqual(0n);
 
 	expect(unp([131, 111, 0, 0, 0, 9, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])).toEqual(1n);
 	expect(unp([131, 111, 0, 0, 0, 9, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0])).toEqual(257n);
@@ -158,6 +158,22 @@ test("Unpacks large Big", () => {
 
 	expect(() => unp([131, 111, 0, 0, 0])).toThrowError("BufferSizeMismatch");
 	expect(() => unp([131, 111, 0, 0, 0, 0, 0, 1])).toThrowError("BufferSizeMismatch");
+});
+
+test("Unpacks bigints as strings", () => {
+	expect(unp([131, 110, 0, 0], { bigintsAsStrings: true })).toEqual("0");
+	expect(unp([131, 110, 1, 0, 1], { bigintsAsStrings: true })).toEqual("1");
+	expect(unp([131, 110, 1, 1, 1], { bigintsAsStrings: true })).toEqual("-1");
+
+	expect(unp([131, 110, 0, 0], { bigintsAsStrings: true })).toEqual("0");
+	expect(unp([131, 110, 0, 1], { bigintsAsStrings: true })).toEqual("0");
+
+	expect(unp([131, 110, 9, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0], { bigintsAsStrings: true })).toEqual("1");
+	expect(unp([131, 110, 9, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0], { bigintsAsStrings: true })).toEqual("257");
+	expect(unp([131, 110, 9, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1], { bigintsAsStrings: true })).toEqual("18446744073709551617");
+
+	expect(() => unp([131, 110], { bigintsAsStrings: true })).toThrowError("BufferSizeMismatch");	
+	expect(() => unp([131, 110, 0, 0, 1], { bigintsAsStrings: true })).toThrowError("BufferSizeMismatch");
 });
 
 test("Unpacks list", () => {

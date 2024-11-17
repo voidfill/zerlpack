@@ -9,19 +9,31 @@ fn ensureOnlySignificantBits(comptime amount: u6, value: u64) bool {
     return (value & mask) == value;
 }
 
+pub fn toString(ctx: *znapi.Ctx, value: napi.napi_value) !napi.napi_value {
+    var res: napi.napi_value = undefined;
+    try znapi.statusToError(znapi.raw.napi_coerce_to_string(ctx.env, value, &res));
+    return res;
+}
+
+pub const DecodeOptions = struct {
+    bigintsAsStrings: ?bool = false,
+};
+
 const DecodeError = error{ BufferSizeMismatch, WrongFormatVersion, SignificantBitError, WrongTag } || znapi.napi_error || znapi.Ctx.TranslationError;
 pub const Decoder = struct {
     buffer: []const u8,
     index: usize,
     ctx: *znapi.Ctx,
     allocator: std.mem.Allocator,
+    options: DecodeOptions,
 
-    pub fn init(buffer: []const u8, ctx: *znapi.Ctx, allocator: std.mem.Allocator) !Decoder {
+    pub fn init(buffer: []const u8, ctx: *znapi.Ctx, allocator: std.mem.Allocator, options: DecodeOptions) !Decoder {
         var dec: Decoder = Decoder{
             .buffer = buffer,
             .index = 0,
             .ctx = ctx,
             .allocator = allocator,
+            .options = options,
         };
         const format_version = try dec.read8();
 
@@ -300,7 +312,8 @@ pub const Decoder = struct {
         std.mem.copyForwards(u8, parts, self.buffer[self.index .. self.index + length]);
         self.index += length;
 
-        return self.ctx.createBigintBytes(sign != 0, parts);
+        const bigint = try self.ctx.createBigintBytes(sign != 0, parts);
+        return if (self.options.bigintsAsStrings orelse false) try toString(self.ctx, bigint) else bigint;
     }
 
     fn decodeArray(self: *Decoder, length: u32) !napi.napi_value {
